@@ -9,23 +9,24 @@ endif()
 find_package(ament_cmake REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
-# find_package(<depend> REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/libs/libi2c)
+add_executable(imu-listener 
+  src/imu-listener.cpp 
+  src/i2c.c)
 
-add_executable(imu-listener src/imu-listener.cpp)
 target_include_directories(imu-listener PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 
-# Add i2c library
-target_include_directories(imu-listener PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs/libi2c/include>
-  $<INSTALL_INTERFACE:libs/libi2c/include>)
-
 target_compile_features(imu-listener PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 
-target_link_libraries(${PROJECT_NAME} PUBLIC i2c)
+ament_target_dependencies(imu-listener 
+  rclcpp std_msgs sensor_msgs
+)
+
 
 install(TARGETS imu-listener
   DESTINATION lib/${PROJECT_NAME})
