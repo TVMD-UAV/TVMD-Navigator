@@ -1,0 +1,4 @@
+<launch>
+    <node name="imu_node" pkg="imu-listener" type="imu-listener_node" output="screen" />
+    <include file="$(find realsense2_camera)/launch/rs_camera.launch" />
+</launch>

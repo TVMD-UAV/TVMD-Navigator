@@ -1,6 +1,7 @@
 install/
 log/
 build/
+devel/
 
 # Ignore generated docs
 *.dox
@@ -23,6 +24,8 @@ qtcreator-*
 
 # Emacs
 .#*
+
+**/.catkin_workspace
 
 # Colcon custom files
 COLCON_IGNORE

@@ -3,35 +3,33 @@
 #include <cstdlib>
 #include <cstring>
 
-#include <i2c/i2c.h>
+#include "i2c/i2c.h"
 
-#include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/imu.hpp>
-#include <std_msgs/msg/string.hpp>
+#include <ros/ros.h>
+#include <sensor_msgs/Imu.h>
+#include <std_msgs/String.h>
 
 using namespace std::chrono_literals;
 
 
-class IMU_Transporter : public rclcpp::Node {
+class IMU_Transporter {
 public:
-    IMU_Transporter() : Node("IMU_Transpoter"), count_(0), _imu_msg()
-    {
-        
+    IMU_Transporter(ros::NodeHandle* nodehandle) : nh_(*nodehandle) {
         while (i2c_init() != 0) {
-            RCLCPP_FATAL(this->get_logger(), "Fail to open device");
-            rclcpp::sleep_for(500ms);
-            RCLCPP_INFO(this->get_logger(), "Retrying...");
+            ROS_FATAL("Fail to open device");
+            ros::Duration(0.5).sleep();
+            ROS_INFO("Retrying...");
         }
         // Queue size = 10
-        publisher_ = this->create_publisher<sensor_msgs::msg::Imu>("imu", 10);
-        timer_ = this->create_wall_timer(
-            40ms, std::bind(&IMU_Transporter::timer_callback, this));
-        RCLCPP_INFO(this->get_logger(), "Initiated!");
+        publisher_ = nh_.advertise<sensor_msgs::Imu>("imu", 10);
+        timer_ = nh_.createTimer(ros::Duration(0.04), &IMU_Transporter::timer_callback, this);
+        ros::Duration(0.5).sleep();
+        ROS_INFO("Initiated!");
     }
 
     ~IMU_Transporter() {
         i2c_close(_i2c_bus);
-        RCLCPP_INFO(this->get_logger(), "Closing I2C");
+        ROS_INFO("Closing I2C");
     }
     struct Quaternion {
         float q0;   // q0: w
@@ -62,20 +60,20 @@ public:
     };
 
 private:
-    rclcpp::TimerBase::SharedPtr timer_;
-    rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr publisher_;
-    size_t count_;
+    ros::NodeHandle nh_;
+    ros::Publisher  publisher_;
+    ros::Timer timer_;
 
     /* I2C */
     static const unsigned int _imu_addr{0x66};  // Address of the imu data provider
 
-    int _i2c_bus{-1};
+    int _i2c_bus;
     I2CDevice _device;
     I2C_READ_HANDLE i2c_read_handle = i2c_ioctl_read;
 
     SensorData _raw_data;
 
-    sensor_msgs::msg::Imu _imu_msg;
+    sensor_msgs::Imu _imu_msg;
 
     int i2c_init() {
         /* Open i2c bus */
@@ -84,7 +82,7 @@ private:
         const char bus_name[] = "/dev/i2c-1";
 
         if ((_i2c_bus = i2c_open(bus_name)) == -1) {
-            RCLCPP_FATAL(this->get_logger(), "Open i2c bus:%s error!\n", bus_name);
+            ROS_FATAL("Open i2c bus:%s error!\n", bus_name);
             return -1;
         }
 
@@ -98,10 +96,10 @@ private:
         return 0;
     }
 
-    void timer_callback()
+    void timer_callback(const ros::TimerEvent& e)
     {
         if (_read_from_i2c() > 0) {
-            publisher_->publish(_imu_msg);
+            publisher_.publish(_imu_msg);
         }
     }
 
@@ -112,10 +110,10 @@ private:
 
         ret = i2c_read_handle(&_device, 0x0, _raw_data.raw, sizeof(SensorData::Data));
         if (ret == -1) {
-            RCLCPP_FATAL(this->get_logger(), "Read i2c error!\n");
+            ROS_FATAL("Read i2c error!\n");
         }
         else if ((size_t)ret != sizeof(SensorData::Data)) {
-            RCLCPP_FATAL(this->get_logger(), "Data length not equal!\n");
+            ROS_FATAL("Data length not equal!\n");
         }
         else {
             // Successfully read sensor data
@@ -136,27 +134,12 @@ private:
 
 int main(int argc, char ** argv)
 {
-    rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<IMU_Transporter>());
-    rclcpp::shutdown();
+    ros::init(argc, argv, "imu_listener");
+    ros::NodeHandle nh;
+    IMU_Transporter transporter(&nh);
+    
+    ros::spin();
+    ros::shutdown();
     
     return 0;
 }
-
-
-// void print_i2c_data(const unsigned char *data, size_t len)
-// {
-//     size_t i = 0;
-
-//     for (i = 0; i < len; i++) {
-
-//         if (i % 16 == 0) {
-
-//             fprintf(stdout, "\n");
-//         }
-
-//         fprintf(stdout, "%02x ", data[i]);
-//     }
-
-//     fprintf(stdout, "\n");
-// }

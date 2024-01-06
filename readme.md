@@ -24,3 +24,10 @@ cd TVMD-Navigator/nav_ws
 rosdep install --from-paths src --ignore-src -r -y
 catkin_make
 ```
+
+## Run
+
+Running the following command to launch imu listener and the camera node.
+```bash
+roslaunch cam_calibr cam_imu_start.launch
+```
