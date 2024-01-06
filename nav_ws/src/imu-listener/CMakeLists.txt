@@ -15,7 +15,7 @@ find_package(sensor_msgs REQUIRED)
 
 add_executable(imu-listener 
   src/imu-listener.cpp 
-  src/i2c.c)
+  src/i2c/i2c.c)
 
 target_include_directories(imu-listener PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
