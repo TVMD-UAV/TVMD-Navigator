@@ -17,9 +17,10 @@ Target environment:
     ```
 
 ## Build
-
+Clone the repo and install dependencies using [rosdep](https://wiki.ros.org/rosdep)
 ```bash
 git clone https://github.com/TVMD-UAV/TVMD-Navigator.git
 cd TVMD-Navigator/nav_ws
+rosdep install --from-paths src --ignore-src -r -y
 catkin_make
 ```
