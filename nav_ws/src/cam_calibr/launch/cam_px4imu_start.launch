@@ -4,7 +4,15 @@
     <arg name="color_fps"           default="15"/>
     <arg name="enable_depth"        default="false"/>
 
-    <node name="imu_node" pkg="imu-listener" type="imu-listener_node" output="screen" />
+    <arg name="fcu_url"     default="/dev/ttyTHS1:921600"/>
+    <!-- Disable ground control station proxy -->
+    <arg name="gcs_url"     default=""/>
+
+    <include file="$(find mavros)/launch/px4.launch">
+        <arg name="fcu_url"     value="$(arg fcu_url)"/>
+        <arg name="gcs_url"     value="$(arg gcs_url)"/>
+    </include>
+
     <include file="$(find realsense2_camera)/launch/rs_camera.launch">
         <arg name="color_width"     value="$(arg color_width)"/>
         <arg name="color_height"    value="$(arg color_height)"/>

@@ -1,0 +1,11 @@
+<launch>
+    <arg name="fcu_url"     default="/dev/ttyTHS1:921600"/>
+    <!-- Disable ground control station proxy -->
+    <arg name="gcs_url"     default=""/>
+
+    <remap from="sensors/imu" to="mavros/imu/data_raw"/>
+    <include file="$(find mavros)/launch/px4.launch">
+        <arg name="fcu_url"     value="$(arg fcu_url)"/>
+        <arg name="gcs_url"     value="$(arg gcs_url)"/>
+    </include>
+</launch>
