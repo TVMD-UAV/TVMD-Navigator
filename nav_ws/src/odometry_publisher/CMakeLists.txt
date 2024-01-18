@@ -10,10 +10,6 @@ project(odometry_publisher)
 find_package(catkin REQUIRED
     roscpp
     nav_msgs
-    apriltag_ros
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -108,7 +104,7 @@ find_package(catkin REQUIRED
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES odometry_publisher
- CATKIN_DEPENDS roscpp nav_msgs apriltag_ros tf2 tf2_ros tf2_geometry_msgs
+ CATKIN_DEPENDS roscpp nav_msgs apriltag_ros
 #  DEPENDS system_lib
 )
 
@@ -139,9 +135,6 @@ include_directories(
 add_executable(odometry_republisher_node 
     src/odometry_republisher_node.cpp)
 
-add_executable(april_odometry_republisher_node 
-    src/april_odometry_republisher_node.cpp)
-
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -154,10 +147,6 @@ add_executable(april_odometry_republisher_node
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(odometry_republisher_node
-  ${catkin_LIBRARIES}
-)
-
-target_link_libraries(april_odometry_republisher_node
   ${catkin_LIBRARIES}
 )
 
