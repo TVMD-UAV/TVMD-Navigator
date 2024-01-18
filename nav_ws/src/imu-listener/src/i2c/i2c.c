@@ -121,6 +121,10 @@ char *i2c_get_device_desc(const I2CDevice *device, char *buf, size_t size)
 */
 ssize_t i2c_ioctl_read(const I2CDevice *device, unsigned int iaddr, void *buf, size_t len)
 {
+    int bytes_left;
+    if (ioctl(device->bus, FIONREAD, (unsigned long)&bytes_left) < len) {
+        return bytes_left;
+    }
     struct i2c_msg ioctl_msg[2];
     struct i2c_rdwr_ioctl_data ioctl_data;
     unsigned char addr[INT_ADDR_MAX_BYTES];
@@ -172,7 +176,7 @@ ssize_t i2c_ioctl_read(const I2CDevice *device, unsigned int iaddr, void *buf, s
         return -1;
     }
 
-    return len;
+    return ioctl_data.msgs->len;
 }
 
 
