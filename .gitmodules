@@ -16,3 +16,7 @@
 [submodule "nav_ws/src/apriltag_ros"]
 	path = nav_ws/src/apriltag_ros
 	url = https://github.com/AprilRobotics/apriltag_ros.git
+[submodule "nav_ws/src/open_vins"]
+	path = nav_ws/src/open_vins
+	url = https://github.com/rpng/open_vins.git
+
