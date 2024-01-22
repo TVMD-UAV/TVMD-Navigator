@@ -5,6 +5,7 @@
 
 #! /usr/bin/env python
 import sys
+import numpy as np
 import rospy
 from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import State
@@ -23,7 +24,9 @@ class Commander:
     def __init__(self) -> None:
         self.state_sub = rospy.Subscriber("mavros/state", State, callback = self.state_cb)
 
-        self.local_pos_pub = rospy.Publisher("mavros/setpoint_position/local", PoseStamped, queue_size=10)
+        self.local_pos_sub = rospy.Subscriber("mavros/local_position/pose", PoseStamped, callback = self.local_pose_cb)
+
+        self.local_pos_pub = rospy.Publisher("mavros/setpoint_position/local", PoseStamped, queue_size=1)
 
         rospy.wait_for_service("/mavros/cmd/arming")
         self.arming_client = rospy.ServiceProxy("mavros/cmd/arming", CommandBool)
@@ -37,6 +40,8 @@ class Commander:
         self.old_std_settings = termios.tcgetattr(sys.stdin)
 
         self.state = State()
+        self.local_pose = PoseStamped()
+        self.takeoff_pose = np.zeros(3)
         self.pose = PoseStamped()
 
         # Wait for Flight Controller connection
@@ -58,6 +63,9 @@ class Commander:
     def state_cb(self, msg):
         self.state = msg
 
+    def local_pose_cb(self, msg):
+        self.local_pose = msg
+
     def _send_dummy(self) -> None:
         # Send a few setpoints before starting
         for i in range(10):
@@ -73,7 +81,7 @@ class Commander:
 
         if(self.state.mode != mode and (rospy.Time.now() - self._last_mode_req) > rospy.Duration(1.0)):
             if(self.set_mode_client.call(offb_set_mode).mode_sent == True):
-                rospy.loginfo("{mode} enabled")
+                rospy.loginfo(f"{mode} enabled")
             self._last_mode_req = rospy.Time.now()
 
     def _try_set_arm(self, arm: bool) -> None:
@@ -83,6 +91,11 @@ class Commander:
         if(self.state.armed != arm and (rospy.Time.now() - self._last_arm_req) > rospy.Duration(0.5)):
             if(self.arming_client.call(arm_cmd).success == True):
                 rospy.loginfo("Vehicle {}".format("armed" if arm else "disarmed"))
+                # self.takeoff_pose = self.local_pose.position
+                self.takeoff_pose[0] = self.local_pose.pose.position.x
+                self.takeoff_pose[1] = self.local_pose.pose.position.y
+                self.takeoff_pose[2] = self.local_pose.pose.position.z
+                rospy.loginfo("Home position set: {}".format(self.takeoff_pose))
             self._last_arm_req = rospy.Time.now()
 
     def print_help(self) -> None:
@@ -124,14 +137,31 @@ class Commander:
         return False
     
     def update_task(self, t):
-        self.pose.header.stamp = rospy.Time.now()
-        self.pose.header.seq = self.count
+        self.pose.header.frame_id = "odom_ned"
+        self.pose.pose.position.x = self.takeoff_pose[0]
+        self.pose.pose.position.y = self.takeoff_pose[1]
+        self.pose.pose.position.z = self.takeoff_pose[2]
 
-        if t < 10:
-            self.pose.pose.position.z = t
-        elif t > 30:
-            self.pose.pose.position.z = 40 - t
-        elif t > 40: 
+        up_time = 2
+        hover_time = 6
+        land_time = 2
+        shutdown_time = 2
+
+        t1 = up_time
+        t2 = t1 + hover_time
+        t3 = t2 + land_time
+        t4 = t3 + shutdown_time
+
+        if t < t1:
+            self.pose.pose.position.z = self.takeoff_pose[2] + 0.5 * t
+        elif t > t1 and t < t2:
+            self.pose.pose.position.z = self.takeoff_pose[2] + 0.5 * up_time
+        elif t > t2 and t < t3:
+            self.pose.pose.position.z = self.takeoff_pose[2] + 0.5 * up_time - 0.5 * (t - t2)
+        elif t > t3 and t < t4: 
+            self.pose.pose.position.z = self.takeoff_pose[2] - (t - t3)
+        elif t > t4:
+            self.pose.pose.position.z = -10
             self.should_run = False
 
     def pose_pretty_print(self) -> str:
@@ -148,6 +178,7 @@ class Commander:
             while(not rospy.is_shutdown()):
                 if (self._handle_user_cmd()):
                     break
+                self.pose.header = rospy.Header()
                 
                 self._try_set_mode(self.target_mode)
                 self._try_set_arm(self.target_arm)
@@ -158,6 +189,7 @@ class Commander:
                     self.update_task(t.to_sec())
 
                 self.local_pos_pub.publish(self.pose)
+                self.count += 1
                 self.rate.sleep()
 
         except Exception as e:
