@@ -9,6 +9,7 @@ project(nav_control)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   mavros
+  mavros_extras
   mavros_msgs
   rospy
 )

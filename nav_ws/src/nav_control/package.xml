@@ -50,8 +50,10 @@
   <!--   <doc_depend>doxygen</doc_depend> -->
   <buildtool_depend>catkin</buildtool_depend>
   <build_depend>mavros</build_depend>
+  <build_depend>mavros_extras</build_depend>
   <build_depend>rospy</build_depend>
   <build_export_depend>mavros</build_export_depend>
+  <build_export_depend>mavros_extras</build_export_depend>
   <build_export_depend>rospy</build_export_depend>
   <exec_depend>mavros</exec_depend>
   <exec_depend>mavros_msgs</exec_depend>
