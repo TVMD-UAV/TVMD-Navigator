@@ -7,10 +7,11 @@
 import sys
 import numpy as np
 import rospy
-from geometry_msgs.msg import PoseStamped
-from mavros_msgs.msg import State
+from geometry_msgs.msg import PoseStamped, TwistStamped
+from mavros_msgs.msg import State, AttitudeTarget, ManualControl
 from mavros_msgs.srv import CommandBool, CommandBoolRequest, SetMode, SetModeRequest
 
+import math
 import sys
 from select import select
 
@@ -26,6 +27,9 @@ class Commander:
 
         self.local_pos_sub = rospy.Subscriber("mavros/local_position/pose", PoseStamped, callback = self.local_pose_cb)
 
+        # self.local_attitude_pub = rospy.Publisher("mavros/setpoint_raw/target_attitude", AttitudeTarget, queue_size=1)
+        self.manual_pub = rospy.Publisher("mavros/manual_control/send", ManualControl, queue_size=1)
+        self.velocity_pub = rospy.Publisher("mavros/setpoint_velocity/cmd_vel", TwistStamped, queue_size=1)
         self.local_pos_pub = rospy.Publisher("mavros/setpoint_position/local", PoseStamped, queue_size=1)
 
         rospy.wait_for_service("/mavros/cmd/arming")
@@ -43,6 +47,27 @@ class Commander:
         self.local_pose = PoseStamped()
         self.takeoff_pose = np.zeros(3)
         self.pose = PoseStamped()
+        self.pose.pose.orientation.w = 1
+        self.target_attitude = AttitudeTarget()
+        self.manual_sp = ManualControl()
+        self.velocity_sp = TwistStamped()
+
+        # Initialization
+        self.pose.header = rospy.Header()
+        self.target_attitude.header = rospy.Header()
+        self.manual_sp.header = rospy.Header()
+        self.velocity_sp.header = rospy.Header()
+
+        self.manual_sp.x = 0
+        self.manual_sp.y = 0
+        self.manual_sp.z = 0    # Throttle
+        self.manual_sp.r = 0
+        self.velocity_sp.twist.linear.x = 0
+        self.velocity_sp.twist.linear.y = 0
+        self.velocity_sp.twist.linear.z = 0
+        self.velocity_sp.twist.angular.x = 0
+        self.velocity_sp.twist.angular.y = 0
+        self.velocity_sp.twist.angular.z = 0
 
         # Wait for Flight Controller connection
         while(not rospy.is_shutdown() and not self.state.connected):
@@ -65,6 +90,7 @@ class Commander:
 
     def local_pose_cb(self, msg):
         self.local_pose = msg
+
 
     def _send_dummy(self) -> None:
         # Send a few setpoints before starting
@@ -95,6 +121,13 @@ class Commander:
                 self.takeoff_pose[0] = self.local_pose.pose.position.x
                 self.takeoff_pose[1] = self.local_pose.pose.position.y
                 self.takeoff_pose[2] = self.local_pose.pose.position.z
+                self.pose.pose.position.x = self.takeoff_pose[0]
+                self.pose.pose.position.y = self.takeoff_pose[1]
+                self.pose.pose.position.z = self.takeoff_pose[2]
+                self.pose.pose.orientation.x = 0
+                self.pose.pose.orientation.y = 0
+                self.pose.pose.orientation.z = 0
+                self.pose.pose.orientation.w = 1
                 rospy.loginfo("Home position set: {}".format(self.takeoff_pose))
             self._last_arm_req = rospy.Time.now()
 
@@ -164,11 +197,103 @@ class Commander:
             self.pose.pose.position.z = -10
             self.should_run = False
 
+    def update_task2(self, t):
+        self.pose.header.frame_id = "odom_ned"
+        self.pose.pose.position.x = self.takeoff_pose[0]
+        self.pose.pose.position.y = self.takeoff_pose[1]
+        self.pose.pose.position.z = self.takeoff_pose[2]
+
+        self.pose.pose.orientation.w = 1
+        self.target_attitude.orientation.w = 1
+
+        up_time = 2
+        hover_time = 10
+        land_time = 2
+        shutdown_time = 2
+
+        t1 = up_time
+        t2 = t1 + hover_time
+        t3 = t2 + land_time
+        t4 = t3 + shutdown_time
+
+        if t < t1:
+            self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * t
+        elif t > t1 and t < t2:
+            self.pose.pose.position.x = self.takeoff_pose[0] + 0.5 * math.cos(2*math.pi * (t-t1) / hover_time)
+            self.pose.pose.position.y = self.takeoff_pose[1] + 0.5 * math.sin(2*math.pi * (t-t1) / hover_time)
+            self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * up_time
+        elif t > t2 and t < t3:
+            self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * up_time - 0.75 * (t - t2)
+        elif t > t3 and t < t4: 
+            self.pose.pose.position.z = self.takeoff_pose[2] - (t - t3)
+        elif t > t4:
+            self.pose.pose.position.z = -10
+            self.should_run = False
+
+    def update_task3(self, t):
+        self.pose.header.frame_id = "odom_ned"
+        self.pose.pose.position.x = self.takeoff_pose[0]
+        self.pose.pose.position.y = self.takeoff_pose[1]
+        self.pose.pose.position.z = self.takeoff_pose[2]
+
+        self.pose.pose.orientation.w = 1
+        self.target_attitude.orientation.w = 1
+
+        up_time = 2
+        hover_time = 10
+        land_time = 2
+        shutdown_time = 2
+
+        # Ascending param
+        h = 1.5
+        tau = up_time
+
+        # Tilting param
+        T_tilt = 6
+        h_tilt = math.pi / 16
+
+        t1 = up_time
+        t2 = t1 + hover_time
+        t3 = t2 + land_time
+        t4 = t3 + shutdown_time
+
+        # positions in NWU
+        if t < t1:  # Ascending
+            # self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * t
+            self.pose.pose.position.z = self.takeoff_pose[2] + (
+                0.5 * h * (1 - math.cos(math.pi * (t - 0) / tau)))
+            self.velocity_sp.twist.linear.z = 0.5 * h* math.pi / tau * math.sin(math.pi * (t - 0) / tau)
+        elif t > t1 and t < t2: # Hover
+            # self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * up_time
+            self.pose.pose.position.z = self.takeoff_pose[2] + h
+            self.velocity_sp.twist.linear.z = 0
+
+            self.manual_sp.x = 0
+            self.manual_sp.y = 0
+            self.manual_sp.r = 0
+
+            t_m = (t1 + t2) / 2
+            if t > t_m - T_tilt / 2 and t < t_m + T_tilt / 2:
+                # Scale for manual control: 1000
+                self.manual_sp.x = 1000 * h_tilt * (1 + math.cos(2 * math.pi / T_tilt * (t - t_m)))
+        elif t > t2 and t < t3: # Descending
+            # self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * up_time - 0.75 * (t - t2)
+            self.pose.pose.position.z = self.takeoff_pose[2] + h - (
+                0.5 * h * (1 - math.cos(math.pi * (t - t2) / tau)))
+            self.velocity_sp.twist.linear.z = -0.5 * h* math.pi / tau * math.sin(math.pi * (t - t2) / tau)
+        elif t > t3 and t < t4: 
+            self.pose.pose.position.z = self.takeoff_pose[2] - (t - t3)
+            self.velocity_sp.twist.linear.z = 0
+        elif t > t4:
+            self.pose.pose.position.z = -10
+            self.velocity_sp.twist.linear.z = 0
+            self.should_run = False
+
     def pose_pretty_print(self) -> str:
         pose = self.pose.pose
         return "p = [{:5.3f}, {:5.3f}, {:5.3f}], q = [{:5.3f}, {:5.3f}, {:5.3f}, {:5.3f}]".format(
             pose.position.x, pose.position.y, pose.position.z, 
-            pose.orientation.w, pose.orientation.w, pose.orientation.w, pose.orientation.w
+            pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w
         )
 
     def main_loop(self):
@@ -178,7 +303,13 @@ class Commander:
             while(not rospy.is_shutdown()):
                 if (self._handle_user_cmd()):
                     break
-                self.pose.header = rospy.Header()
+                header = rospy.Header()
+                header.seq = self.count
+                header.stamp = rospy.Time.now()
+                self.pose.header = header
+                self.manual_sp.header = header
+                self.velocity_sp.header = header
+                self.pose.header = header
                 
                 self._try_set_mode(self.target_mode)
                 self._try_set_arm(self.target_arm)
@@ -186,9 +317,15 @@ class Commander:
                 if (self.should_run):
                     t = rospy.Time.now() - self.start_time
                     print("[{:7.2f}] {}".format(t.to_sec(), self.pose_pretty_print()))
-                    self.update_task(t.to_sec())
+                    #self.update_task(t.to_sec())
+                    # self.update_task2(t.to_sec())
+                    self.update_task3(t.to_sec())
 
+                self.velocity_pub.publish(self.velocity_sp)
                 self.local_pos_pub.publish(self.pose)
+                # self.local_attitude_pub.publish(self.target_attitude)
+                self.manual_pub.publish(self.manual_sp)
+
                 self.count += 1
                 self.rate.sleep()
 
