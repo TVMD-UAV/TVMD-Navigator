@@ -8,12 +8,13 @@ import sys
 import numpy as np
 import rospy
 from geometry_msgs.msg import PoseStamped, TwistStamped
-from mavros_msgs.msg import State, AttitudeTarget, ManualControl
+from mavros_msgs.msg import State, AttitudeTarget, ManualControl, PositionTarget 
 from mavros_msgs.srv import CommandBool, CommandBoolRequest, SetMode, SetModeRequest
 
 import math
 import sys
 from select import select
+from tasks import tasks_handler
 
 if sys.platform == 'win32':
     import msvcrt
@@ -29,8 +30,9 @@ class Commander:
 
         # self.local_attitude_pub = rospy.Publisher("mavros/setpoint_raw/target_attitude", AttitudeTarget, queue_size=1)
         self.manual_pub = rospy.Publisher("mavros/manual_control/send", ManualControl, queue_size=1)
-        self.velocity_pub = rospy.Publisher("mavros/setpoint_velocity/cmd_vel", TwistStamped, queue_size=1)
         self.local_pos_pub = rospy.Publisher("mavros/setpoint_position/local", PoseStamped, queue_size=1)
+        self.pos_raw_pub = rospy.Publisher("mavros/setpoint_raw/local", PositionTarget, queue_size=1)
+        self.local_attitude_pub = rospy.Publisher("mavros/setpoint_raw/attitude", AttitudeTarget, queue_size=1)
 
         rospy.wait_for_service("/mavros/cmd/arming")
         self.arming_client = rospy.ServiceProxy("mavros/cmd/arming", CommandBool)
@@ -46,28 +48,10 @@ class Commander:
         self.state = State()
         self.local_pose = PoseStamped()
         self.takeoff_pose = np.zeros(3)
-        self.pose = PoseStamped()
-        self.pose.pose.orientation.w = 1
-        self.target_attitude = AttitudeTarget()
-        self.manual_sp = ManualControl()
-        self.velocity_sp = TwistStamped()
+        self.terminate_pos = np.zeros(3)
 
-        # Initialization
-        self.pose.header = rospy.Header()
-        self.target_attitude.header = rospy.Header()
-        self.manual_sp.header = rospy.Header()
-        self.velocity_sp.header = rospy.Header()
-
-        self.manual_sp.x = 0
-        self.manual_sp.y = 0
-        self.manual_sp.z = 0    # Throttle
-        self.manual_sp.r = 0
-        self.velocity_sp.twist.linear.x = 0
-        self.velocity_sp.twist.linear.y = 0
-        self.velocity_sp.twist.linear.z = 0
-        self.velocity_sp.twist.angular.x = 0
-        self.velocity_sp.twist.angular.y = 0
-        self.velocity_sp.twist.angular.z = 0
+        self.tasks = tasks_handler.TaskHandler()
+        self.tasks.set_default()
 
         # Wait for Flight Controller connection
         while(not rospy.is_shutdown() and not self.state.connected):
@@ -75,6 +59,7 @@ class Commander:
 
         rospy.loginfo("PX4 Connected!")
         self._send_dummy()
+        rospy.loginfo("Dummy Finished")
 
         self._last_mode_req = rospy.Time.now()
         self._last_arm_req = rospy.Time.now()
@@ -98,7 +83,10 @@ class Commander:
             if(rospy.is_shutdown()):
                 break
 
-            self.local_pos_pub.publish(self.pose)
+            self.tasks.pose_target_sp.header = rospy.Header()
+            self.tasks.pose_target_sp.header.stamp = rospy.Time.now()
+            self.pos_raw_pub.publish(self.tasks.pose_target_sp)
+            self.manual_pub.publish(self.tasks.manual_sp)
             self.rate.sleep()
 
     def _try_set_mode(self, mode: str) -> None:
@@ -121,13 +109,6 @@ class Commander:
                 self.takeoff_pose[0] = self.local_pose.pose.position.x
                 self.takeoff_pose[1] = self.local_pose.pose.position.y
                 self.takeoff_pose[2] = self.local_pose.pose.position.z
-                self.pose.pose.position.x = self.takeoff_pose[0]
-                self.pose.pose.position.y = self.takeoff_pose[1]
-                self.pose.pose.position.z = self.takeoff_pose[2]
-                self.pose.pose.orientation.x = 0
-                self.pose.pose.orientation.y = 0
-                self.pose.pose.orientation.z = 0
-                self.pose.pose.orientation.w = 1
                 rospy.loginfo("Home position set: {}".format(self.takeoff_pose))
             self._last_arm_req = rospy.Time.now()
 
@@ -165,79 +146,38 @@ class Commander:
                 self.start_time = rospy.Time.now()
             elif c == 's':
                 self.should_run = False
+                self.terminate_pos[0] = self.local_pose.pose.position.x
+                self.terminate_pos[1] = self.local_pose.pose.position.y
+                self.terminate_pos[2] = self.local_pose.pose.position.z
             else:
                 rospy.logwarn(f"Unknown command: {c}")
         return False
     
-    def update_task(self, t):
+    """
+    Using setpoint_raw to send position target
+    """
+    def update_task4(self, t):
+        # https://github.com/mavlink/mavros/issues/471#issuecomment-172424122
+        self.pose_target_sp.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
+        self.pose_target_sp.type_mask = PositionTarget.IGNORE_YAW
         self.pose.header.frame_id = "odom_ned"
-        self.pose.pose.position.x = self.takeoff_pose[0]
-        self.pose.pose.position.y = self.takeoff_pose[1]
-        self.pose.pose.position.z = self.takeoff_pose[2]
+        
+        # Initialization / default values
+        self.pose_target_sp.position.x = self.takeoff_pose[0]
+        self.pose_target_sp.position.y = self.takeoff_pose[1]
+        self.pose_target_sp.position.z = self.takeoff_pose[2]
 
-        up_time = 2
-        hover_time = 6
-        land_time = 2
-        shutdown_time = 2
+        self.pose_target_sp.velocity.x = 0
+        self.pose_target_sp.velocity.y = 0
+        self.pose_target_sp.velocity.z = 0
 
-        t1 = up_time
-        t2 = t1 + hover_time
-        t3 = t2 + land_time
-        t4 = t3 + shutdown_time
+        self.pose_target_sp.acceleration_or_force.x = 0
+        self.pose_target_sp.acceleration_or_force.y = 0
+        self.pose_target_sp.acceleration_or_force.z = 0
 
-        if t < t1:
-            self.pose.pose.position.z = self.takeoff_pose[2] + 0.5 * t
-        elif t > t1 and t < t2:
-            self.pose.pose.position.z = self.takeoff_pose[2] + 0.5 * up_time
-        elif t > t2 and t < t3:
-            self.pose.pose.position.z = self.takeoff_pose[2] + 0.5 * up_time - 0.5 * (t - t2)
-        elif t > t3 and t < t4: 
-            self.pose.pose.position.z = self.takeoff_pose[2] - (t - t3)
-        elif t > t4:
-            self.pose.pose.position.z = -10
-            self.should_run = False
-
-    def update_task2(self, t):
-        self.pose.header.frame_id = "odom_ned"
-        self.pose.pose.position.x = self.takeoff_pose[0]
-        self.pose.pose.position.y = self.takeoff_pose[1]
-        self.pose.pose.position.z = self.takeoff_pose[2]
-
-        self.pose.pose.orientation.w = 1
-        self.target_attitude.orientation.w = 1
-
-        up_time = 2
-        hover_time = 10
-        land_time = 2
-        shutdown_time = 2
-
-        t1 = up_time
-        t2 = t1 + hover_time
-        t3 = t2 + land_time
-        t4 = t3 + shutdown_time
-
-        if t < t1:
-            self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * t
-        elif t > t1 and t < t2:
-            self.pose.pose.position.x = self.takeoff_pose[0] + 0.5 * math.cos(2*math.pi * (t-t1) / hover_time)
-            self.pose.pose.position.y = self.takeoff_pose[1] + 0.5 * math.sin(2*math.pi * (t-t1) / hover_time)
-            self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * up_time
-        elif t > t2 and t < t3:
-            self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * up_time - 0.75 * (t - t2)
-        elif t > t3 and t < t4: 
-            self.pose.pose.position.z = self.takeoff_pose[2] - (t - t3)
-        elif t > t4:
-            self.pose.pose.position.z = -10
-            self.should_run = False
-
-    def update_task3(self, t):
-        self.pose.header.frame_id = "odom_ned"
-        self.pose.pose.position.x = self.takeoff_pose[0]
-        self.pose.pose.position.y = self.takeoff_pose[1]
-        self.pose.pose.position.z = self.takeoff_pose[2]
-
-        self.pose.pose.orientation.w = 1
-        self.target_attitude.orientation.w = 1
+        self.manual_sp.x = 0
+        self.manual_sp.y = 0
+        self.manual_sp.r = 0
 
         up_time = 2
         hover_time = 10
@@ -250,7 +190,8 @@ class Commander:
 
         # Tilting param
         T_tilt = 6
-        h_tilt = math.pi / 16
+        h_tilt = math.pi / 4
+        # h_tilt = math.pi / 16
 
         t1 = up_time
         t2 = t1 + hover_time
@@ -259,42 +200,104 @@ class Commander:
 
         # positions in NWU
         if t < t1:  # Ascending
-            # self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * t
-            self.pose.pose.position.z = self.takeoff_pose[2] + (
+            self.pose_target_sp.position.z = self.takeoff_pose[2] + (
                 0.5 * h * (1 - math.cos(math.pi * (t - 0) / tau)))
-            self.velocity_sp.twist.linear.z = 0.5 * h* math.pi / tau * math.sin(math.pi * (t - 0) / tau)
+            self.pose_target_sp.velocity.z = 0.5 * h* math.pi / tau * math.sin(math.pi * (t - 0) / tau)
+            self.pose_target_sp.acceleration_or_force.z = 0.5 * h * (math.pi**2) / (tau**2) * math.cos(math.pi * (t - 0) / tau)
         elif t > t1 and t < t2: # Hover
-            # self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * up_time
-            self.pose.pose.position.z = self.takeoff_pose[2] + h
-            self.velocity_sp.twist.linear.z = 0
-
-            self.manual_sp.x = 0
-            self.manual_sp.y = 0
-            self.manual_sp.r = 0
+            self.pose_target_sp.position.z = self.takeoff_pose[2] + h
 
             t_m = (t1 + t2) / 2
             if t > t_m - T_tilt / 2 and t < t_m + T_tilt / 2:
                 # Scale for manual control: 1000
-                self.manual_sp.x = 1000 * h_tilt * (1 + math.cos(2 * math.pi / T_tilt * (t - t_m)))
+                self.manual_sp.y = 1000 * h_tilt * (1 + math.cos(2 * math.pi / T_tilt * (t - t_m)))
         elif t > t2 and t < t3: # Descending
-            # self.pose.pose.position.z = self.takeoff_pose[2] + 0.75 * up_time - 0.75 * (t - t2)
-            self.pose.pose.position.z = self.takeoff_pose[2] + h - (
+            self.pose_target_sp.position.z = self.takeoff_pose[2] + h - (
                 0.5 * h * (1 - math.cos(math.pi * (t - t2) / tau)))
-            self.velocity_sp.twist.linear.z = -0.5 * h* math.pi / tau * math.sin(math.pi * (t - t2) / tau)
+            self.pose_target_sp.velocity.z = -0.5 * h* math.pi / tau * math.sin(math.pi * (t - t2) / tau)
+            self.pose_target_sp.acceleration_or_force.z = -0.5 * h * (math.pi**2) / (tau**2) * math.cos(math.pi * (t - t2) / tau)
         elif t > t3 and t < t4: 
-            self.pose.pose.position.z = self.takeoff_pose[2] - (t - t3)
-            self.velocity_sp.twist.linear.z = 0
+            self.pose_target_sp.position.z = self.takeoff_pose[2] - (t - t3)
         elif t > t4:
-            self.pose.pose.position.z = -10
-            self.velocity_sp.twist.linear.z = 0
+            self.pose_target_sp.position.z = -10
+            self.should_run = False
+
+    """
+    Using setpoint_raw to send position target
+    """
+    def update_task5(self, t):
+        # https://github.com/mavlink/mavros/issues/471#issuecomment-172424122
+        self.pose_target_sp.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
+        self.pose_target_sp.type_mask = PositionTarget.IGNORE_YAW
+        self.pose.header.frame_id = "odom_ned"
+        
+        # Initialization / default values
+        self.pose_target_sp.position.x = self.takeoff_pose[0]
+        self.pose_target_sp.position.y = self.takeoff_pose[1]
+        self.pose_target_sp.position.z = self.takeoff_pose[2]
+
+        self.pose_target_sp.velocity.x = 0
+        self.pose_target_sp.velocity.y = 0
+        self.pose_target_sp.velocity.z = 0
+
+        self.manual_sp.x = 0
+        self.manual_sp.y = 0
+        self.manual_sp.r = 0
+
+        up_time = 2
+        hover_time = 12
+        land_time = 2
+        shutdown_time = 2
+
+        # Ascending param
+        h = 1.5
+        tau = up_time
+
+        # Tilting param
+        T_tilt = 2 * math.pi
+        h_tilt = math.pi / 16
+        l = 1
+
+        t1 = up_time
+        t2 = t1 + hover_time
+        t3 = t2 + land_time
+        t4 = t3 + shutdown_time
+
+        # positions in NWU
+        if t < t1:  # Ascending
+            self.pose_target_sp.position.z = self.takeoff_pose[2] + (
+                0.5 * h * (1 - math.cos(math.pi * (t - 0) / tau)))
+            self.pose_target_sp.velocity.z = 0.5 * h* math.pi / tau * math.sin(math.pi * (t - 0) / tau)
+        elif t > t1 and t < t2: # Hover
+            self.pose_target_sp.position.z = self.takeoff_pose[2] + h
+
+            t_m = (t1 + t2) / 2
+            if t > t_m - T_tilt / 2 and t < t_m + T_tilt / 2:
+                idx = 2 * math.pi / T_tilt * (t - t_m)
+                self.pose_target_sp.position.x = l * math.cos(idx)
+                self.pose_target_sp.position.y = l * math.sin(2 * idx)
+                self.pose_target_sp.velocity.x = -2 * math.pi * l / T_tilt * math.sin(idx)
+                self.pose_target_sp.velocity.y =  4 * math.pi * l / T_tilt * math.cos(2 * idx)
+
+                # Scale for manual control: 1000
+                # self.manual_sp.x = 1000 * h_tilt * (1 + math.cos(2 * math.pi / T_tilt * (t - t_m)))
+        elif t > t2 and t < t3: # Descending
+            self.pose_target_sp.position.z = self.takeoff_pose[2] + h - (
+                0.5 * h * (1 - math.cos(math.pi * (t - t2) / tau)))
+            self.pose_target_sp.velocity.z = -0.5 * h* math.pi / tau * math.sin(math.pi * (t - t2) / tau)
+        elif t > t3 and t < t4: 
+            self.pose_target_sp.position.z = self.takeoff_pose[2] - (t - t3)
+        elif t > t4:
+            self.pose_target_sp.position.z = -10
             self.should_run = False
 
     def pose_pretty_print(self) -> str:
-        pose = self.pose.pose
-        return "p = [{:5.3f}, {:5.3f}, {:5.3f}], q = [{:5.3f}, {:5.3f}, {:5.3f}, {:5.3f}]".format(
-            pose.position.x, pose.position.y, pose.position.z, 
-            pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w
-        )
+        pos = self.tasks.pose_target_sp.position
+        vel = self.tasks.pose_target_sp.velocity
+        man = self.tasks.manual_sp
+        return "p = [{:5.3f}, {:5.3f}, {:5.3f}], v = [{:5.3f}, {:5.3f}, {:5.3f}], q = [{:5.3f}, {:5.3f}, {:5.3f}]".format(
+            pos.x, pos.y, pos.z, vel.x, vel.y, vel.z,
+            man.x/1000, man.y/1000, man.r/1000)
 
     def main_loop(self):
         try:
@@ -303,28 +306,23 @@ class Commander:
             while(not rospy.is_shutdown()):
                 if (self._handle_user_cmd()):
                     break
-                header = rospy.Header()
-                header.seq = self.count
-                header.stamp = rospy.Time.now()
-                self.pose.header = header
-                self.manual_sp.header = header
-                self.velocity_sp.header = header
-                self.pose.header = header
                 
                 self._try_set_mode(self.target_mode)
                 self._try_set_arm(self.target_arm)
+                self.tasks.set_default()
+                self.tasks.pose_target_sp.position.x = self.takeoff_pose[0]
+                self.tasks.pose_target_sp.position.y = self.takeoff_pose[1]
+                self.tasks.pose_target_sp.position.z = self.takeoff_pose[2]
 
                 if (self.should_run):
                     t = rospy.Time.now() - self.start_time
+                    self.should_run = self.tasks.task_tilting(t.to_sec(), self.takeoff_pose, self.should_run)
+                    # self.should_run = self.tasks.task_8shape(t.to_sec(), self.takeoff_pose, self.should_run)
                     print("[{:7.2f}] {}".format(t.to_sec(), self.pose_pretty_print()))
-                    #self.update_task(t.to_sec())
-                    # self.update_task2(t.to_sec())
-                    self.update_task3(t.to_sec())
 
-                self.velocity_pub.publish(self.velocity_sp)
-                self.local_pos_pub.publish(self.pose)
-                # self.local_attitude_pub.publish(self.target_attitude)
-                self.manual_pub.publish(self.manual_sp)
+                self.pos_raw_pub.publish(self.tasks.pose_target_sp)
+                self.manual_pub.publish(self.tasks.manual_sp)
+                self.local_attitude_pub.publish(self.tasks.attitude_target_sp)
 
                 self.count += 1
                 self.rate.sleep()
@@ -335,6 +333,7 @@ class Commander:
         finally:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_std_settings)
             rospy.loginfo("Leaving...")
+
 
 def main():
     rospy.init_node("navigator_commander_node")
