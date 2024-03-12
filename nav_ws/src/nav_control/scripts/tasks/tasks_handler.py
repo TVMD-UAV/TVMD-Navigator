@@ -119,9 +119,11 @@ class TaskHandler:
 
             Rs = R(t)
             euler = tf.transformations.euler_from_matrix(Rs, 'syxz')
-            Ws = W(t)
-            dWs = dW(t)
-            torque = np.cross(Ws, J @ Ws) + J @ dWs
+            # Ws = W(t)
+            # dWs = dW(t)
+            # torque = np.cross(Ws, J @ Ws) + J @ dWs
+            Ws = None 
+            torque = None
             return euler, Ws, torque
         
         up_time = 2
@@ -135,7 +137,7 @@ class TaskHandler:
 
         # Tilting param
         T_tilt = 6
-        h_tilt = pi / 4
+        h_tilt = pi / 8
         # h_tilt = pi / 16
 
         t1 = up_time
@@ -162,9 +164,9 @@ class TaskHandler:
                 self.manual_sp.y = 1000 * euler[1]
                 self.manual_sp.r = 1000 * euler[2]
 
-                self.attitude_target_sp.body_rate.x = Ws[0]
-                self.attitude_target_sp.body_rate.y = Ws[1]
-                self.attitude_target_sp.body_rate.z = Ws[2]
+                # self.attitude_target_sp.body_rate.x = Ws[0]
+                # self.attitude_target_sp.body_rate.y = Ws[1]
+                # self.attitude_target_sp.body_rate.z = Ws[2]
                 # torque
         elif t > t2 and t < t3: # Descending
             self.pose_target_sp.position.z = takeoff_pose[2] + h - (
@@ -203,7 +205,7 @@ class TaskHandler:
         shutdown_time = 2
 
         # Ascending param
-        h = 1.5
+        h = 2.0
         tau = up_time
 
         # Tilting param
@@ -221,6 +223,7 @@ class TaskHandler:
             self.pose_target_sp.position.z = takeoff_pose[2] + (
                 0.5 * h * (1 - cos(pi * (t - 0) / tau)))
             self.pose_target_sp.velocity.z = 0.5 * h* pi / tau * sin(pi * (t - 0) / tau)
+            self.pose_target_sp.acceleration_or_force.z = 0.5 * h * (pi**2) / (tau**2) * cos(pi * (t - 0) / tau)
         elif t > t1 and t < t2: # Hover
             self.pose_target_sp.position.z = takeoff_pose[2] + h
 
@@ -229,13 +232,16 @@ class TaskHandler:
                 idx = 2 * pi / T_tilt * (t - t_m)
                 self.pose_target_sp.position.x = l * cos(idx)
                 self.pose_target_sp.position.y = l * sin(2 * idx)
-                self.pose_target_sp.velocity.x = -2 * pi * l / T_tilt * sin(idx)
-                self.pose_target_sp.velocity.y =  4 * pi * l / T_tilt * cos(2 * idx)
+                self.pose_target_sp.velocity.x = -1 * pi * l / T_tilt * sin(idx)
+                self.pose_target_sp.velocity.y =  2 * pi * l / T_tilt * cos(2 * idx)
+                self.pose_target_sp.acceleration_or_force.x = h * (pi**2) / (T_tilt**2) * cos(idx)
+                self.pose_target_sp.acceleration_or_force.y = 4 * h * (pi**2) / (T_tilt**2) * sin(idx)
 
         elif t > t2 and t < t3: # Descending
             self.pose_target_sp.position.z = takeoff_pose[2] + h - (
                 0.5 * h * (1 - cos(pi * (t - t2) / tau)))
             self.pose_target_sp.velocity.z = -0.5 * h* pi / tau * sin(pi * (t - t2) / tau)
+            self.pose_target_sp.acceleration_or_force.z = -0.5 * h * (pi**2) / (tau**2) * cos(pi * (t - t2) / tau)
         elif t > t3 and t < t4: 
             self.pose_target_sp.position.z = takeoff_pose[2] - (t - t3)
         elif t > t4:

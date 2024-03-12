@@ -32,7 +32,7 @@ class Commander:
         self.manual_pub = rospy.Publisher("mavros/manual_control/send", ManualControl, queue_size=1)
         self.local_pos_pub = rospy.Publisher("mavros/setpoint_position/local", PoseStamped, queue_size=1)
         self.pos_raw_pub = rospy.Publisher("mavros/setpoint_raw/local", PositionTarget, queue_size=1)
-        self.local_attitude_pub = rospy.Publisher("mavros/setpoint_raw/attitude", AttitudeTarget, queue_size=1)
+        # self.local_attitude_pub = rospy.Publisher("mavros/setpoint_raw/attitude", AttitudeTarget, queue_size=1)
 
         rospy.wait_for_service("/mavros/cmd/arming")
         self.arming_client = rospy.ServiceProxy("mavros/cmd/arming", CommandBool)
@@ -190,7 +190,7 @@ class Commander:
 
         # Tilting param
         T_tilt = 6
-        h_tilt = math.pi / 4
+        h_tilt = math.pi / 8
         # h_tilt = math.pi / 16
 
         t1 = up_time
@@ -322,7 +322,7 @@ class Commander:
 
                 self.pos_raw_pub.publish(self.tasks.pose_target_sp)
                 self.manual_pub.publish(self.tasks.manual_sp)
-                self.local_attitude_pub.publish(self.tasks.attitude_target_sp)
+                #self.local_attitude_pub.publish(self.tasks.attitude_target_sp)
 
                 self.count += 1
                 self.rate.sleep()
